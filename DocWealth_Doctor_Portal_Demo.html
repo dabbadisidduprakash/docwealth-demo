@@ -297,8 +297,7 @@
         }
       }
 
-      async function handleSubmit(body) {
-        try {
+      async function handleSubmit(body) {        try {
           var row = {
             client_id: body.clientId || "unknown",
             token: body.portalToken || "",
@@ -335,6 +334,20 @@
           return jsonResponse({ ok: true });
         }
         return realFetch(input, init);
+      };
+
+      /* Load the previously SUBMITTED answers back from Supabase, so a doctor asked
+         to make corrections sees everything they filled (Option 1: form answers). */
+      window.DW_SB_LOADDATA = async function (clientId) {
+        try {
+          if (!clientId) return null;
+          var r = await realFetch(SUPABASE_URL + "/rest/v1/portal_submissions?select=portal_data&client_id=eq." + encodeURIComponent(clientId), { headers: sbHeaders() });
+          var rows = await r.json();
+          if (!rows || !rows.length) return null;
+          var pd = rows[0].portal_data;
+          if (typeof pd === "string") { try { pd = JSON.parse(pd); } catch (e) { return null; } }
+          return pd || null;
+        } catch (e) { return null; }
       };
     })();
     </script>
@@ -1447,7 +1460,21 @@
         const status = await checkPortalStatus();
         if (!status) return;
         const serverSubmitted = status.status === "Submitted" || status.status === "Locked";
-        if (status.status === "Needs Correction" && state.submittedAt) {
+        if (status.status === "Needs Correction") {
+          /* Pull the previously submitted answers back so the doctor edits, not re-types.
+             Works even on a fresh device where no local draft exists. */
+          try {
+            if (typeof window.DW_SB_LOADDATA === "function") {
+              const pd = await window.DW_SB_LOADDATA(PORTAL_CLIENT_ID);
+              if (pd && pd.sections) {
+                state.sections = Object.assign({}, state.sections, pd.sections);
+                if (pd.selectedServices) state.selectedServices = pd.selectedServices;
+                if (typeof pd.wantsAdditional !== "undefined") state.wantsAdditional = pd.wantsAdditional;
+                if (pd.completed) state.completed = pd.completed;
+                state.started = true;
+              }
+            }
+          } catch (e) {}
           state.submittedAt = "";
           state.currentSectionId = "review";
           saveNow();
